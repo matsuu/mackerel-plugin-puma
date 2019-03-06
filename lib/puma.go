@@ -2,6 +2,11 @@ package mppuma
 
 import (
 	"flag"
+	"log"
+	"net/url"
+	"os"
+
+	"gopkg.in/yaml.v2"
 
 	mp "github.com/mackerelio/go-mackerel-plugin"
 )
@@ -90,6 +95,7 @@ func Do() {
 		optHost     = flag.String("host", "127.0.0.1", "The bind url to use for the control server")
 		optPort     = flag.String("port", "9293", "The bind port to use for the control server")
 		optSock     = flag.String("sock", "", "The bind socket to use for the control server")
+		optState    = flag.String("state", "", "The bind state file to use for the control server")
 		optToken    = flag.String("token", "", "The token to use as authentication for the control server")
 		optSingle   = flag.Bool("single", false, "Puma in single mode")
 		optWithGC   = flag.Bool("with-gc", false, "Output include GC stats for Puma 3.10.0~")
@@ -105,6 +111,38 @@ func Do() {
 	puma.Token = *optToken
 	puma.Single = *optSingle
 	puma.WithGC = *optWithGC
+
+	if *optState != "" {
+		type State struct {
+			Url   string `yaml:"control_url"`
+			Token string `yaml:"control_auth_token"`
+		}
+		file, err := os.Open(*optState)
+		if err != nil {
+			log.Fatalf("Failed to open %s: %v\n", *optState, err)
+		}
+		defer file.Close()
+
+		var state State
+		err = yaml.NewDecoder(file).Decode(&state)
+		if err != nil {
+			log.Fatalf("Failed to decode %s as yaml: %v\n", *optState, err)
+		}
+		u, err := url.Parse(state.Url)
+		if err != nil {
+			log.Fatalf("Failed to parse %s as url: %v\n", state.Url, err)
+		}
+		switch u.Scheme {
+		case "unix":
+			puma.Sock = u.Path
+		case "tcp":
+			puma.Host = u.Hostname()
+			puma.Port = u.Port()
+		default:
+			log.Fatalf("Unknown scheme: %s\n", u.Scheme)
+		}
+		puma.Token = state.Token
+	}
 
 	helper := mp.NewMackerelPlugin(puma)
 	helper.Tempfile = *optTempfile
